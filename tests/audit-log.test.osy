@@ -1,0 +1,59 @@
+// The audit log reads the platform's change trail as the reader may read it: a steward reads each change with its
+// values, who made it and when; a gardener — whom the garden's `app.Audit` never lets read the trail — is neither shown
+// the page nor given a line; a value the garden redacts never appears; a removed plot is still named.
+using Osysharp.Identity;
+using Osysharp.AuditLog;
+using AuditLogKitTests;
+
+DateTime Yesterday() { return DateTime.UtcNow.AddDays(-1); }
+
+[Test(Garden)]
+void a_steward_reads_each_change_with_its_values_who_and_when() {
+  runas (Ada) {
+    var plot = AddPlot("North bed", 10);
+    Resize(plot, 14);
+    var lines = AuditLogLines(Yesterday());
+    var changed = lines.Single(l => l.Kind == "Plot" && l.Happened == "Changed");
+    Assert.Equal("North bed", changed.Name);
+    Assert.Contains("Square metres: 10 → 14", changed.Fields);
+    Assert.Equal("Ada Steward", changed.By);
+    var added = lines.Single(l => l.Kind == "Plot" && l.Happened == "Added");
+    Assert.Equal("North bed", added.Name);
+    // Newest first.
+    Assert.True(lines.IndexOf(changed) < lines.IndexOf(added));
+  }
+}
+
+[Test(Garden)]
+void somebody_the_trail_is_closed_to_is_neither_shown_the_log_nor_given_a_line() {
+  runas (Ada) { Resize(AddPlot("South bed", 8), 9); }
+  runas (Gus) {
+    Assert.False(new AuditLogSettingsSections().Sections()[0].Shown);
+    // The page is anybody's to open; the rows are the trail's to give, and it gives a gardener none.
+    Assert.Equal(0, AuditLogLines(Yesterday()).Count);
+  }
+  runas (Ada) { Assert.True(new AuditLogSettingsSections().Sections()[0].Shown); }
+}
+
+[Test(Garden)]
+void a_value_the_app_redacts_never_appears_and_the_change_still_does() {
+  runas (Ada) {
+    var plot = AddPlot("Herb corner", 4);
+    SetShedCode(plot, "4711");
+    var line = AuditLogLines(Yesterday()).Single(l => l.Kind == "Plot" && l.Happened == "Changed");
+    Assert.Equal(1, line.Fields.Count);
+    Assert.StartsWith("Shed code: ", line.Fields[0]);
+    Assert.DoesNotContain("4711", line.Fields[0]);
+  }
+}
+
+[Test(Garden)]
+void a_removed_record_is_still_named() {
+  runas (Ada) {
+    var plot = AddPlot("Old greenhouse", 20);
+    RemovePlot(plot);
+    var removed = AuditLogLines(Yesterday()).Single(l => l.Kind == "Plot" && l.Happened == "Removed");
+    Assert.Equal("Plot", removed.Kind);
+    Assert.Equal("Old greenhouse", removed.Name);
+  }
+}

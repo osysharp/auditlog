@@ -1,0 +1,22 @@
+// Osysharp.AuditLog — the app's audit log, as a page of its settings: who changed what, from what to what, and when,
+// newest first, narrowed by period, by kind of record and by person.
+//
+// The kit records nothing. The platform already keeps the change trail (`EntityAuditRecord`, `use Osysharp.Observability;`)
+// and the app already says who may read it (`app.Audit.EntityAuditRecord.Read`). This kit is the page that reads it.
+//
+// ⚑ ONE LINE MOUNTS IT — `use Osysharp.AuditLog@0;`. The rows are the app's own `app.Audit` read rule's to give, so the
+//   app does not say who reads its trail twice: the settings link is shown to whoever that rule lets read a change,
+//   and somebody it closes the trail to opens an empty log.
+// ⚑ AN APP NARROWS WHO MAY OPEN THE PAGE with one policy — `policy ReadsAuditLog => IsAdmin;` (anybody signed in by
+//   default) — and takes the page over by name (a component `AuditLogSettings` of its own).
+package Osysharp.AuditLog {
+  version "0.1.0";
+  minPlatform "0.15.0";
+  summary     "the app's audit log as a settings page — every change the platform's change trail holds that the reader may read, newest first, with each field's old and new value, who made it and when, narrowed by period, kind of record and person; mounted with one line, shown to whoever the app's audit read rule admits.";
+  model "model/**/*.osy";
+  // The change trail it reads — the platform's own, gated by the app's `app.Audit`.
+  use Osysharp.Observability;
+  // The settings area's contract and frame — the page sits among the app's other settings.
+  use Osysharp.Ui;
+  tests "tests";
+}

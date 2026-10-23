@@ -1,0 +1,105 @@
+// SETTINGS › AUDIT LOG — every change the reader may read, newest first: what kind of record, which one, what happened,
+// each field from what to what, who did it and when; narrowed by period, by kind of record and by person.
+//
+// ⚑ AN APP TAKES THE PAGE OVER BY NAME — a component `AuditLogSettings` of its own replaces the kit's.
+namespace Osysharp.AuditLog;
+
+using Osysharp.Ui;
+
+[Route("/settings/audit")] [Layout(SettingsFrame)] [Authorize(ReadsAuditLog)] [Render(CSR)] [Title("Audit log")]
+component AuditLogSettings() {
+  AuditLogPeriod period = AuditLogPeriod.Month;
+  string? kind = null;
+  string? who = null;
+  List<AuditLogLine> lines = [];
+  bool loaded = false;
+  DateTime now = DateTime.UtcNow;
+
+  on mount { Load(); }
+
+  /// A year of changes, newest first; the period, the kind and the person narrow it on the page.
+  action Load() {
+    now = DateTime.UtcNow;
+    lines = AuditLogLines(AuditLogSince(AuditLogPeriod.Year, now));
+    loaded = true;
+  }
+
+  render {
+    SettingsPage("Audit log", description: "Every change to the app's records that you may read — what changed, from what to what, who made it and when. Nobody edits or deletes these.") {
+      Stack(gap: 4) {
+        Row(gap: 3, wrap: Wrapping.Wrap, align: Align.End) {
+          Box(w: Layout.AtLeast(Tablet) ? "200px" : "100%") { Dropdown("Period", value: period); }
+          Box(w: Layout.AtLeast(Tablet) ? "220px" : "100%") {
+            Dropdown("Kind of record", value: kind, options: lines.Select(l => l.Kind).Distinct().OrderBy(k => k).ToArray(),
+                     placeholder: "Every kind") { k => Text(k); }
+          }
+          Box(w: Layout.AtLeast(Tablet) ? "240px" : "100%") {
+            Dropdown("Changed by", value: who, options: lines.Select(l => AuditLogBy(l.By)).Distinct().OrderBy(b => b).ToArray(),
+                     placeholder: "Anyone") { p => Text(p); }
+          }
+          Button("Refresh", tone: Tone.Ghost, onPress: () => Load());
+        }
+        if (!loaded) {
+          Stack(gap: 2) { Skeleton(shape: SkeletonShape.Line); Skeleton(shape: SkeletonShape.Line); Skeleton(shape: SkeletonShape.Line); }
+        } else {
+          AuditLogList(lines.Where(l => l.At >= AuditLogSince(period, now) && (kind == null || l.Kind == kind)
+                                        && (who == null || AuditLogBy(l.By) == who)).ToList(),
+                       lines.Count >= AuditLogTake(), lines.Count == 0);
+        }
+      }
+    }
+  }
+}
+
+/// Who made a change, as the log names them — the app itself when nobody did.
+public string AuditLogBy(string by) { return by != "" ? by : "The app itself"; }
+
+/// The lines, one per change: when, what, the values, and who — the date beside it on a wide screen, above it on a
+/// phone. `capped`: the read stopped at its limit, so older changes are not here. `nothingYet`: nothing changed in a
+/// year that the reader may read — as opposed to nothing matching what is chosen.
+[Composable]
+component AuditLogList(List<AuditLogLine> shown, bool capped, bool nothingYet) {
+  render {
+    Stack(gap: 0, bg: Colors.Surface, borderW: 1, border: Colors.Border, rounded: Radius.Lg, overflow: Overflow.Hidden) {
+      if (shown.Count > 0) {
+        Row(gap: 3, align: Align.Center, wrap: Wrapping.Wrap, px: 4, py: 2, bg: Colors.Sunken, borderBW: 1, border: Colors.Border) {
+          Text(shown.Count == 1 ? "1 change" : shown.Count + " changes", fontFamily: Font.Mono, fontSize: FontSize.Caption,
+               color: Colors.TextMuted, fontVariant: FontVariant.TabularNums);
+          Spacer();
+          if (capped) { Text("The newest " + AuditLogTake() + " — narrow the period to see further back", fontSize: FontSize.Caption, color: Colors.TextMuted); }
+        }
+      }
+      if (shown.Count == 0) {
+        Box(p: 5) {
+          EmptyState(nothingYet ? "No changes you may read" : "Nothing matches",
+                     body: nothingYet ? "When somebody adds, changes or removes a record whose history is yours to read, it is listed here — what, who and when."
+                                      : "No change of this kind in this period. Try a longer period, every kind, or anyone.");
+        }
+      }
+      Stack(gap: 0, role: UiRole.List, label: "Changes") {
+        foreach (var l in shown) {
+          Row(gap: 4, align: Align.Start, wrap: Layout.AtLeast(Tablet) ? Wrapping.NoWrap : Wrapping.Wrap, px: 4, py: 3,
+              borderBW: 1, border: Colors.Border, role: UiRole.ListItem, label: l.Kind + " " + l.Happened.ToLower()) {
+            if (Layout.AtLeast(Tablet)) {
+              Stack(gap: 0, w: "120px", shrink: 0) {
+                Text(l.At.ToString("d MMM yyyy"), fontSize: FontSize.Caption, color: Colors.TextSecondary, fontVariant: FontVariant.TabularNums);
+                Text(l.At.ToString("HH:mm") + " UTC", fontFamily: Font.Mono, fontSize: FontSize.Caption, color: Colors.TextMuted);
+              }
+            } else {
+              Text(l.At.ToString("d MMM yyyy · HH:mm") + " UTC", fontSize: FontSize.Caption, color: Colors.TextMuted,
+                   fontVariant: FontVariant.TabularNums, w: "100%");
+            }
+            Stack(gap: 1, grow: 1, minW: "0") {
+              Row(gap: 2, align: Align.Center, wrap: Wrapping.Wrap) {
+                Badge(l.Happened, tone: l.Happened == "Removed" ? Tone.Warning : l.Happened == "Added" ? Tone.Success : Tone.Default);
+                Text(l.Kind + (l.Name != "" ? " · “" + l.Name + "”" : ""), fontWeight: FontWeight.Medium);
+              }
+              foreach (var f in l.Fields) { Text(f, fontSize: FontSize.Label, color: Colors.TextSecondary); }
+              Text("by " + AuditLogBy(l.By), fontSize: FontSize.Caption, color: Colors.TextMuted);
+            }
+          }
+        }
+      }
+    }
+  }
+}

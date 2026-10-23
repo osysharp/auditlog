@@ -1,0 +1,159 @@
+// What the audit log reads, and how a change is said: one line per change the platform's change trail holds that the
+// reader may read — what kind of record, which one when it has a name, what happened to it, each field from what to
+// what, who did it and when.
+//
+// ⚑ THE TRAIL'S OWN READ RULE DECIDES THE ROWS. `EntityAuditRecord` is deny-by-default and opened by the app's
+//   `app.Audit.EntityAuditRecord.Read`; this kit reads it like any other entity and adds no access of its own. An app
+//   that opens the trail to admins for its settings alone gets a log of its settings alone.
+namespace Osysharp.AuditLog;
+
+using Osysharp.Ui;
+using Osysharp.Observability;
+
+/// Who may open the audit log: anybody signed in, until the app says otherwise (`policy ReadsAuditLog => IsAdmin;`).
+/// WHICH CHANGES they see is never this policy's to say — it is the app's own `app.Audit` read rule, applied to every
+/// row, so somebody it closes the trail to opens an empty log.
+/// ⚑ NOT `EntityAuditRecord.Any()`: a policy's reads are the rule's, not the reader's, so that answered true for
+///   everybody. The settings link asks it as the reader instead (`AuditLogSettingsSections`).
+virtual policy ReadsAuditLog => IsAuthenticated;
+
+/// The log's section in the app's settings — announced to whoever may read it.
+public class AuditLogSettingsSections : ISettingsProvider {
+  public SettingsLink[] Sections() {
+    return [
+      // Shown to whoever the app's audit read rule lets read at least one change — asked as the reader, so nobody is
+      // offered a log that is empty because it is closed to them.
+      new SettingsLink { Label = "Audit log", To = "/settings/audit", Icon = Icons.History, Order = 90,
+                         Shown = ReadsAuditLog && EntityAuditRecord.Any(),
+                         Hint = "Every change, from what to what, who made it and when." },
+    ];
+  }
+}
+
+/// How far back the log looks.
+public enum AuditLogPeriod {
+  [Label("Last 7 days")] Week,
+  [Label("Last 30 days")] Month,
+  [Label("Last 90 days")] Quarter,
+  [Label("Last year")] Year,
+}
+
+/// One change, as the log says it.
+public class AuditLogLine {
+  public Guid Id;
+  /// The record the change was made to.
+  public Guid Record;
+  public DateTime At;
+  /// The kind of record, as a person reads it — "Opening hours", from `OpeningHours`.
+  public string Kind = "";
+  /// The record by its name — "Main branch" — as the trail last named it, else "". A change that did not touch the name
+  /// (a resize, a removal) is still named, from the record's other changes.
+  public string Name = "";
+  /// `Added` · `Changed` · `Removed`.
+  public string Happened = "";
+  /// Each field from what to what — "Closes at: 17:00 → 18:00". A reference says only that it moved.
+  public List<string> Fields = [];
+  /// Who made the change, as they were named then — "" when the app made it itself (a workflow, its starting data).
+  public string By = "";
+}
+
+/// The most changes the log reads at once — a page, not an export.
+public int AuditLogTake() { return 200; }
+
+/// The instant a period starts.
+public DateTime AuditLogSince(AuditLogPeriod p, DateTime now) {
+  if (p == AuditLogPeriod.Week) { return now.AddDays(-7); }
+  if (p == AuditLogPeriod.Month) { return now.AddDays(-30); }
+  if (p == AuditLogPeriod.Quarter) { return now.AddDays(-90); }
+  return now.AddDays(-365);
+}
+
+/// A field's old and new value, as the trail keeps them.
+public class AuditLogDelta {
+  [ExternalName("old")] public Json? Old;
+  [ExternalName("new")] public Json? New;
+}
+
+/// The changes since `since`, newest first, at most `AuditLogTake()` — every one the reader may read, and no other.
+[Authorize(ReadsAuditLog)]
+public List<AuditLogLine> AuditLogLines(DateTime since) {
+  List<AuditLogLine> lines = [];
+  foreach (var e in EntityAuditRecord.Where(x => x.Timestamp >= since)
+                                     .OrderByDescending(x => x.Timestamp).Take(AuditLogTake()).ToList()) {
+    lines.Add(AuditLogLineOf(e));
+  }
+  // A line whose change did not carry the record's name takes it from the record's newest change that did — on the
+  // page already, or, for a record named before the period, from the trail in ONE read.
+  var unnamed = lines.Where(l => l.Name == "").Select(l => l.Record).Distinct().ToList();
+  if (unnamed.Count > 0) {
+    var named = lines.Where(l => l.Name != "").ToList();
+    var missing = unnamed.Where(id => !named.Any(l => l.Record == id)).ToList();
+    if (missing.Count > 0) {
+      foreach (var e in EntityAuditRecord.Where(x => missing.Contains(x.EntityId) && x.Timestamp < since)
+                                         .OrderByDescending(x => x.Timestamp).Take(AuditLogTake()).ToList()) {
+        named.Add(AuditLogLineOf(e));
+      }
+    }
+    foreach (var l in lines.Where(l => l.Name == "").ToList()) {
+      var source = named.FirstOrDefault(n => n.Record == l.Record && n.Name != "");
+      if (source != null) { l.Name = source.Name; }
+    }
+  }
+  return lines;
+}
+
+/// One record of the trail as a line of the log.
+public AuditLogLine AuditLogLineOf(EntityAuditRecord e) {
+  var deltas = JsonSerializer.Deserialize<Dictionary<string, AuditLogDelta>>(e.Changes ?? "{}");
+  var name = "";
+  foreach (var key in new List<string> { "Name", "Title", "DisplayName", "Label", "Code", "Email" }) {
+    if (name == "" && deltas.ContainsKey(key)) {
+      var d = deltas[key];
+      var shown = e.Action == "Delete" ? AuditLogValue(d.Old) : AuditLogValue(d.New);
+      if (shown != "—" && shown != "‹redacted›") { name = shown; }
+    }
+  }
+  List<string> fields = [];
+  if (e.Action == "Update") {
+    foreach (var field in deltas.Keys) {
+      if (field == "ModifiedAt" || field == "ModifiedBy" || field == "CreatedAt" || field == "CreatedBy") { continue; }
+      var d = deltas[field];
+      var before = AuditLogValue(d.Old);
+      var after = AuditLogValue(d.New);
+      // A reference moves from one row's id to another's — the field's name says what moved; the ids say nothing.
+      if (AuditLogIsId(before) || AuditLogIsId(after)) { fields.Add(AuditLogWords(field) + " changed"); }
+      else { fields.Add(AuditLogWords(field) + ": " + before + " → " + after); }
+    }
+  }
+  return new AuditLogLine {
+    Id = e.Id, Record = e.EntityId, At = e.Timestamp ?? DateTime.UtcNow, Kind = AuditLogWords(AuditLogBareType(e.EntityType)), Name = name,
+    Happened = e.Action == "Create" ? "Added" : e.Action == "Delete" ? "Removed" : "Changed",
+    Fields = fields, By = e.UserId == Guid.Empty ? "" : (e.UserName ?? ""),
+  };
+}
+
+/// A value from the trail as a person reads it: the text without its quotes, "—" for none, cut at 80 characters.
+public string AuditLogValue(Json? value) {
+  if (value == null) { return "—"; }
+  var text = value.ToString().Trim();
+  if (text == "null" || text == "") { return "—"; }
+  if (text.StartsWith("\"") && text.EndsWith("\"") && text.Length >= 2) { text = text.Substring(1, text.Length - 2); }
+  if (text == "") { return "—"; }
+  return text.Length > 80 ? text.Substring(0, 79) + "…" : text;
+}
+
+bool AuditLogIsId(string text) {
+  return Regex.IsMatch(text, "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$");
+}
+
+/// "ClosesAt" → "Closes at".
+public string AuditLogWords(string name) {
+  if (name == "") { return name; }
+  var words = Regex.Replace(name, "([a-z0-9])([A-Z])", "$1 $2");
+  return words.Substring(0, 1) + words.Substring(1).ToLower();
+}
+
+/// A type as the trail names it, without its package — "Osysharp.WorkQueues.Queue" → "Queue".
+public string AuditLogBareType(string type) {
+  return type.Contains(".") ? type.Substring(type.LastIndexOf(".") + 1) : type;
+}

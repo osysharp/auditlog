@@ -1,0 +1,9 @@
+// The producer's test project for Osysharp.AuditLog — a community garden: plots its stewards look after, and the
+// gardeners who tend them. The stewards read the change trail; a gardener does not. The garden mounts the log with ONE
+// line in its manifest — `use Osysharp.AuditLog@0;` — and says who reads its trail where it always did, in `app.Audit`.
+app AuditLogKitTests {
+  model "model/**/*.osy";
+  tests "**/*.test.osy";
+  use Osysharp.Identity@0;
+  use Osysharp.AuditLog@0;
+}

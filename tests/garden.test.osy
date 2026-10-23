@@ -1,0 +1,20 @@
+// The garden both test files start from: a steward, who reads the change trail, and a gardener, who does not.
+using Osysharp.Identity;
+using AuditLogKitTests;
+
+[TestFixture]
+void Garden() {
+  var ada = new Person { Email = "ada@garden.test", DisplayName = "Ada Steward", CodeHash = Security.HashPassword("1111") };
+  new RoleGrant { Member = ada, Role = GardenRole.Steward };
+  var gus = new Person { Email = "gus@garden.test", DisplayName = "Gus Gardener", CodeHash = Security.HashPassword("2222") };
+  new RoleGrant { Member = gus, Role = GardenRole.Gardener };
+}
+
+principal Ada => Person.Single(p => p.Email == "ada@garden.test");
+principal Gus => Person.Single(p => p.Email == "gus@garden.test");
+
+[Test(Garden)]
+void signing_in_takes_the_right_code_and_refuses_a_wrong_one() {
+  Assert.NotEqual("", SignInWithCode("ada@garden.test", "1111"));
+  Assert.Equal("", SignInWithCode("ada@garden.test", "9999"));
+}

@@ -1,0 +1,60 @@
+namespace AuditLogKitTests;
+
+using Osysharp.Identity;
+
+// A COMMUNITY GARDEN — plots and who tends them. Stewards run the garden and read its change trail; gardeners tend
+// their plots and never read the trail.
+
+[Role] enum GardenRole { Authenticator, Steward, Gardener }
+
+policy IsSteward => RoleGrant.Any(g => g.Member == user && g.Role == GardenRole.Steward);
+policy IsGardener => RoleGrant.Any(g => g.Member == user && (g.Role == GardenRole.Gardener || g.Role == GardenRole.Steward));
+
+/// Somebody who signs in to the garden, with a code — all a test needs.
+entity Person : Principal {
+  [MaxLength(200)] string CodeHash = "";
+  security {
+    allow read when IsAuthenticated || IsAuthenticator;
+    allow create when IsAuthenticator;
+    deny read CodeHash when !IsAuthenticator;
+  }
+}
+
+/// A plot of the garden.
+[Title(Name)]
+entity Plot {
+  [Required("Give the plot a name."), MaxLength(80)] string Name;
+  int SquareMetres;
+  /// The code to the plot's shed — kept out of the trail.
+  [MaxLength(20)] string ShedCode = "";
+  security {
+    allow read, update when IsGardener;
+    allow create, delete when IsSteward;
+  }
+}
+
+public Plot AddPlot(string name, int squareMetres) {
+  var p = new Plot { Name = name, SquareMetres = squareMetres };
+  UnitOfWork.Commit();
+  return p;
+}
+
+public void Resize(Plot p, int squareMetres) { p.SquareMetres = squareMetres; UnitOfWork.Commit(); }
+public void SetShedCode(Plot p, string code) { p.ShedCode = code; UnitOfWork.Commit(); }
+public void RemovePlot(Plot p) { p.Delete(); UnitOfWork.Commit(); }
+
+[AuthMethod]
+string SignInWithCode(string email, string code) {
+  var p = Person.FirstOrDefault(x => x.Email == NormalisedEmail(email));
+  if (p == null || !p.IsActive) { Security.VerifyPassword(code); return ""; }
+  if (!Security.VerifyPassword(code, p.CodeHash)) { return ""; }
+  return Security.IssueJwt(p.Id, p.Email);
+}
+
+app.AuthBootstrap = new AuthBootstrap { Role = GardenRole.Authenticator, Login = SignInWithCode };
+app.Auth = new PasswordAuth { LoginField = Email, PasswordField = CodeHash };
+// Who reads the garden's change trail — the stewards — said where it always is. The audit log page follows it.
+app.Audit = new AuditConfig {
+  EntityAuditRecord = new AuditSurface { Read = user => IsSteward },
+  Redact = new AuditRedaction { Properties = [Person.CodeHash, Plot.ShedCode] },
+};

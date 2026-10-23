@@ -1,0 +1,52 @@
+// The audit log as a steward uses it — from the garden's settings, mounted by nothing but the `use` line. `osy test
+// --pixels` photographs each.
+using Osysharp.Identity;
+using Osysharp.AuditLog;
+using AuditLogKitTests;
+
+[Test(Garden)]
+void a_steward_reads_the_log_from_the_settings_area_and_narrows_it() {
+  runas (Ada) {
+    var plot = AddPlot("North bed", 10);
+    Resize(plot, 14);
+  }
+  Ui.Viewport(1440, 900);
+  Ui.SignInAs(Ada);
+  Ui.Visit("/settings/audit");
+  // Among the app's settings, by nothing but the `use` line.
+  Assert.Visible("Audit log", within: "Settings sections");
+  Assert.Visible("Every change to the app's records that you may read");
+  Assert.Visible("Plot · “North bed”");
+  Assert.Visible("Square metres: 10 → 14");
+  Assert.Visible("by Ada Steward");
+  Ui.Shot("audit-log");
+
+  // Narrowed to one kind of record: the plot's two changes, and not the people the garden began with.
+  Ui.Select("Kind of record", "Plot");
+  Assert.Visible("2 changes");
+  Assert.Hidden("Person");
+  Ui.Shot("audit-log-plots");
+}
+
+[Test(Garden)]
+void on_a_phone_in_the_dark_the_log_fits() {
+  runas (Ada) { Resize(AddPlot("South bed", 8), 9); }
+  Ui.Viewport(390, 844);
+  Ui.Theme("dark");
+  Ui.SignInAs(Ada);
+  Ui.Visit("/settings/audit");
+  Assert.Visible("Square metres: 8 → 9");
+  Assert.NoOverflow();
+  Ui.Shot("audit-log-phone-dark");
+}
+
+[Test(Garden)]
+void somebody_the_trail_is_closed_to_does_not_see_the_log() {
+  runas (Ada) { Resize(AddPlot("South bed", 8), 9); }
+  Ui.SignInAs(Gus);
+  Ui.Visit("/settings/audit");
+  // Not offered among the settings, and opened by its address it holds nothing of the trail's.
+  Assert.Hidden("Audit log", within: "Settings sections");
+  Assert.Visible("No changes you may read");
+  Assert.Hidden("Square metres: 8 → 9");
+}
