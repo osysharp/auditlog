@@ -41,3 +41,75 @@ app.Audit = new AuditConfig {                      // who reads the trail: said 
 `tests/` is a community garden: a steward reads each change with its values; a gardener is neither offered the log nor
 given a line; a redacted value never appears; a removed plot is still named; and the page from the settings area, on a
 phone in the dark too.
+
+## Examples
+
+Taken from this package's own tests, which compile and run on every release.
+
+```osy
+using Osysharp.Identity;
+using Osysharp.AuditLog;
+using AuditLogKitTests;
+
+[Test(Garden)]
+void a_steward_reads_each_change_with_its_values_who_and_when() {
+  runas (Ada) {
+    var plot = AddPlot("North bed", 10);
+    Resize(plot, 14);
+    var lines = AuditLogLines(Yesterday());
+    var changed = lines.Single(l => l.Kind == "Plot" && l.Happened == "Changed");
+    Assert.Equal("North bed", changed.Name);
+    Assert.Contains("Square metres: 10 → 14", changed.Fields);
+    Assert.Equal("Ada Steward", changed.By);
+    var added = lines.Single(l => l.Kind == "Plot" && l.Happened == "Added");
+    Assert.Equal("North bed", added.Name);
+    // Newest first.
+    Assert.True(lines.IndexOf(changed) < lines.IndexOf(added));
+  }
+}
+```
+
+From [`tests/audit-log.test.osy`](tests/audit-log.test.osy).
+
+```osy
+using Osysharp.Identity;
+using AuditLogKitTests;
+
+[Test(Garden)]
+void signing_in_takes_the_right_code_and_refuses_a_wrong_one() {
+  Assert.NotEqual("", SignInWithCode("ada@garden.test", "1111"));
+  Assert.Equal("", SignInWithCode("ada@garden.test", "9999"));
+}
+```
+
+From [`tests/garden.test.osy`](tests/garden.test.osy).
+
+```osy
+using Osysharp.Identity;
+using Osysharp.AuditLog;
+using AuditLogKitTests;
+
+[Test(Garden)]
+void somebody_the_trail_is_closed_to_is_neither_shown_the_log_nor_given_a_line() {
+  runas (Ada) { Resize(AddPlot("South bed", 8), 9); }
+  runas (Gus) {
+    Assert.False(new AuditLogSettingsSections().Sections()[0].Shown);
+    // The page is anybody's to open; the rows are the trail's to give, and it gives a gardener none.
+    Assert.Equal(0, AuditLogLines(Yesterday()).Count);
+  }
+  runas (Ada) { Assert.True(new AuditLogSettingsSections().Sections()[0].Shown); }
+}
+```
+
+From [`tests/audit-log.test.osy`](tests/audit-log.test.osy).
+
+## Learn more
+
+- [The Osysharp.AuditLog reference](https://osysharp.com/reference/ui/audit-log-kit/)
+- [Osysharp.AuditLog in the package catalogue](https://osysharp.com/packages/#osysharp-auditlog)
+- [The Osy# reference](https://osysharp.com/reference/) — the language, the runtime and every kit
+- [`llms-full.txt`](https://osysharp.com/llms-full.txt) — the whole reference and specification as one Markdown file, for a coding agent
+
+## Licence
+
+MIT — see [`LICENSE`](LICENSE).
